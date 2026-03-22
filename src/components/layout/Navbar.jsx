@@ -1,11 +1,17 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Home, User, ShoppingBag, MessageSquare } from 'lucide-react';
+import { Home, User, ShoppingBag, MessageSquare, LogOut } from 'lucide-react';
 
 export default function Navbar() {
   const location = useLocation();
   
+  // Hide navbar on landing, signin, signup pages
+  const hiddenPaths = ['/', '/signin', '/signup'];
+  if (hiddenPaths.includes(location.pathname)) {
+    return null;
+  }
+  
   const navItems = [
-    { name: 'Home', path: '/', icon: Home },
+    { name: 'Home', path: '/home', icon: Home },
     { name: 'Market', path: '/marketplace', icon: ShoppingBag },
     { name: 'Messages', path: '/messages', icon: MessageSquare },
     { name: 'Profile', path: '/profile', icon: User },
@@ -14,7 +20,7 @@ export default function Navbar() {
   return (
     <nav className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-md">
       <div className="max-w-6xl mx-auto px-4 py-3 flex justify-between items-center">
-        <Link to="/" className="font-bold text-2xl text-primary tracking-tight">
+        <Link to="/home" className="font-bold text-2xl text-primary tracking-tight">
           SkillVerse
         </Link>
         
