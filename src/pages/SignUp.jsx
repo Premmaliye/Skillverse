@@ -1,16 +1,22 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Mail, Lock, User, ArrowRight, Check } from 'lucide-react';
+import { Mail, User, Lock, ArrowRight, Check } from 'lucide-react';
+import { supabase } from '../lib/supabaseClient';
 
 export default function SignUp() {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
+    otp: '',
     password: '',
     confirmPassword: ''
   });
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
   const [agreeTerms, setAgreeTerms] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpVerified, setOtpVerified] = useState(false);
   const navigate = useNavigate();
 
   const handleChange = (e) => {
@@ -21,46 +27,118 @@ export default function SignUp() {
     }));
   };
 
-  const handleSubmit = (e) => {
+  const sendOtp = async () => {
+    const { error: otpError } = await supabase.auth.signInWithOtp({
+      email: formData.email,
+      options: {
+        shouldCreateUser: true,
+        data: {
+          full_name: formData.name
+        }
+      }
+    });
+
+    if (otpError) {
+      setError(otpError.message || 'Failed to send OTP. Please try again.');
+      return false;
+    }
+
+    setOtpSent(true);
+    setSuccessMessage('OTP sent to your email. Enter the 8-digit code to verify.');
+    return true;
+  };
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    setSuccessMessage('');
 
-    // Validation
-    if (!formData.name || !formData.email || !formData.password || !formData.confirmPassword) {
-      setError('Please fill in all fields');
+    if (!otpSent) {
+      if (!formData.name || !formData.email) {
+        setError('Please fill in all fields');
+        return;
+      }
+
+      if (formData.name.length < 2) {
+        setError('Name must be at least 2 characters');
+        return;
+      }
+
+      if (!formData.email.includes('@')) {
+        setError('Please enter a valid email');
+        return;
+      }
+
+      if (!agreeTerms) {
+        setError('Please agree to the terms and conditions');
+        return;
+      }
+
+      setIsLoading(true);
+      await sendOtp();
+      setIsLoading(false);
       return;
     }
 
-    if (formData.name.length < 2) {
-      setError('Name must be at least 2 characters');
+    if (!otpVerified) {
+      if (!formData.otp || formData.otp.length !== 8) {
+        setError('Enter the 8-digit OTP sent to your email.');
+        return;
+      }
+
+      setIsLoading(true);
+
+      const { error: verifyError } = await supabase.auth.verifyOtp({
+        email: formData.email,
+        token: formData.otp,
+        type: 'email'
+      });
+
+      setIsLoading(false);
+
+      if (verifyError) {
+        setError(verifyError.message || 'Invalid OTP. Please try again.');
+        return;
+      }
+
+      setOtpVerified(true);
+      setFormData((prev) => ({ ...prev, otp: '' }));
+      setSuccessMessage('OTP verified. Create a password to complete your account.');
       return;
     }
 
-    if (!formData.email.includes('@')) {
-      setError('Please enter a valid email');
+    if (!formData.password || !formData.confirmPassword) {
+      setError('Please enter password and confirm password.');
       return;
     }
 
     if (formData.password.length < 6) {
-      setError('Password must be at least 6 characters');
+      setError('Password must be at least 6 characters.');
       return;
     }
 
     if (formData.password !== formData.confirmPassword) {
-      setError('Passwords do not match');
+      setError('Passwords do not match.');
       return;
     }
 
-    if (!agreeTerms) {
-      setError('Please agree to the terms and conditions');
+    setIsLoading(true);
+
+    const { error: updateUserError } = await supabase.auth.updateUser({
+      password: formData.password,
+      data: {
+        full_name: formData.name
+      }
+    });
+
+    setIsLoading(false);
+
+    if (updateUserError) {
+      setError(updateUserError.message || 'Failed to set password. Please try again.');
       return;
     }
 
-    // TODO: Implement actual registration
-    console.log('Sign up with:', formData);
-    
-    // For now, navigate to home
-    navigate('/home');
+    navigate('/onboarding');
   };
 
   return (
@@ -89,6 +167,12 @@ export default function SignUp() {
               </div>
             )}
 
+            {successMessage && (
+              <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-600">
+                {successMessage}
+              </div>
+            )}
+
             <div>
               <label className="block text-sm font-medium mb-2">Full Name</label>
               <div className="relative">
@@ -99,6 +183,7 @@ export default function SignUp() {
                   value={formData.name}
                   onChange={handleChange}
                   placeholder="Prajakta Singam"
+                  disabled={otpSent || isLoading}
                   className="w-full pl-10 pr-4 py-2 bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
                 />
               </div>
@@ -114,47 +199,87 @@ export default function SignUp() {
                   value={formData.email}
                   onChange={handleChange}
                   placeholder="you@example.com"
+                  disabled={otpSent || isLoading}
                   className="w-full pl-10 pr-4 py-2 bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
                 />
               </div>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium mb-2">Password</label>
-              <div className="relative">
-                <Lock size={20} className="absolute left-3 top-3 text-foreground/50" />
-                <input
-                  type="password"
-                  name="password"
-                  value={formData.password}
-                  onChange={handleChange}
-                  placeholder="••••••••"
-                  className="w-full pl-10 pr-4 py-2 bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                />
+            {otpSent && !otpVerified && (
+              <div>
+                <label className="block text-sm font-medium mb-2">Email OTP</label>
+                <div className="relative">
+                  <Mail size={20} className="absolute left-3 top-3 text-foreground/50" />
+                  <input
+                    type="text"
+                    name="otp"
+                    value={formData.otp}
+                    onChange={handleChange}
+                    placeholder="Enter 8-digit OTP"
+                    inputMode="numeric"
+                    maxLength={8}
+                    className="w-full pl-10 pr-4 py-2 bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setError('');
+                    setSuccessMessage('');
+                    setIsLoading(true);
+                    await sendOtp();
+                    setIsLoading(false);
+                  }}
+                  disabled={isLoading}
+                  className="mt-2 text-sm text-primary hover:text-primary/80 transition-colors"
+                >
+                  Resend OTP
+                </button>
               </div>
-              <p className="text-xs text-foreground/50 mt-1">At least 6 characters</p>
-            </div>
+            )}
 
-            <div>
-              <label className="block text-sm font-medium mb-2">Confirm Password</label>
-              <div className="relative">
-                <Lock size={20} className="absolute left-3 top-3 text-foreground/50" />
-                <input
-                  type="password"
-                  name="confirmPassword"
-                  value={formData.confirmPassword}
-                  onChange={handleChange}
-                  placeholder="••••••••"
-                  className="w-full pl-10 pr-4 py-2 bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                />
-              </div>
-            </div>
+            {otpVerified && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium mb-2">Create Password</label>
+                  <div className="relative">
+                    <Lock size={20} className="absolute left-3 top-3 text-foreground/50" />
+                    <input
+                      type="password"
+                      name="password"
+                      value={formData.password}
+                      onChange={handleChange}
+                      placeholder="Enter password"
+                      disabled={isLoading}
+                      className="w-full pl-10 pr-4 py-2 bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">Confirm Password</label>
+                  <div className="relative">
+                    <Lock size={20} className="absolute left-3 top-3 text-foreground/50" />
+                    <input
+                      type="password"
+                      name="confirmPassword"
+                      value={formData.confirmPassword}
+                      onChange={handleChange}
+                      placeholder="Confirm password"
+                      disabled={isLoading}
+                      className="w-full pl-10 pr-4 py-2 bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                    />
+                  </div>
+                </div>
+              </>
+            )}
 
             <label className="flex items-start gap-3 mt-4">
               <input 
                 type="checkbox" 
                 checked={agreeTerms} 
                 onChange={(e) => setAgreeTerms(e.target.checked)}
+                disabled={otpSent || isLoading}
                 className="mt-1"
               />
               <span className="text-sm text-foreground/70">
@@ -171,9 +296,10 @@ export default function SignUp() {
 
             <button
               type="submit"
+              disabled={isLoading}
               className="w-full py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors font-medium flex items-center justify-center gap-2 mt-6"
             >
-              Create Account <ArrowRight size={20} />
+              {isLoading ? 'Please wait...' : otpVerified ? 'Save Password' : otpSent ? 'Verify OTP' : 'Send OTP'} <ArrowRight size={20} />
             </button>
           </form>
 

@@ -5,7 +5,7 @@ export default function Navbar() {
   const location = useLocation();
   
   // Hide navbar on landing, signin, signup pages
-  const hiddenPaths = ['/', '/signin', '/signup'];
+  const hiddenPaths = ['/', '/signin', '/signup', '/onboarding'];
   if (hiddenPaths.includes(location.pathname)) {
     return null;
   }

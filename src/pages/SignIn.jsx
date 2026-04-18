@@ -1,32 +1,43 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Mail, Lock, ArrowRight } from 'lucide-react';
+import { supabase } from '../lib/supabaseClient';
 
 export default function SignIn() {
-  const [email, setEmail] = useState('');
+  const [loginId, setLoginId] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
 
-    // Basic validation
-    if (!email || !password) {
-      setError('Please fill in all fields');
+    if (!loginId || !password) {
+      setError('Please enter ID/email and password');
       return;
     }
 
-    if (!email.includes('@')) {
-      setError('Please enter a valid email');
+    if (!loginId.includes('@')) {
+      setError('Please enter a valid email as your ID');
       return;
     }
 
-    // TODO: Implement actual authentication
-    console.log('Sign in with:', { email, password });
-    
-    // For now, just navigate to home
+    setIsLoading(true);
+
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: loginId,
+      password
+    });
+
+    setIsLoading(false);
+
+    if (signInError) {
+      setError(signInError.message || 'Login failed. Please check your credentials.');
+      return;
+    }
+
     navigate('/home');
   };
 
@@ -57,14 +68,15 @@ export default function SignIn() {
             )}
 
             <div>
-              <label className="block text-sm font-medium mb-2">Email Address</label>
+              <label className="block text-sm font-medium mb-2">ID / Email</label>
               <div className="relative">
                 <Mail size={20} className="absolute left-3 top-3 text-foreground/50" />
                 <input
                   type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  value={loginId}
+                  onChange={(e) => setLoginId(e.target.value)}
                   placeholder="you@example.com"
+                  disabled={isLoading}
                   className="w-full pl-10 pr-4 py-2 bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
                 />
               </div>
@@ -79,26 +91,18 @@ export default function SignIn() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
+                  disabled={isLoading}
                   className="w-full pl-10 pr-4 py-2 bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
                 />
               </div>
             </div>
 
-            <div className="flex items-center justify-between text-sm">
-              <label className="flex items-center gap-2">
-                <input type="checkbox" className="rounded border-border" />
-                <span>Remember me</span>
-              </label>
-              <a href="#" className="text-primary hover:text-primary/80 transition-colors">
-                Forgot password?
-              </a>
-            </div>
-
             <button
               type="submit"
+              disabled={isLoading}
               className="w-full py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors font-medium flex items-center justify-center gap-2"
             >
-              Sign In <ArrowRight size={20} />
+              {isLoading ? 'Signing in...' : 'Sign In'} <ArrowRight size={20} />
             </button>
           </form>
 
@@ -112,7 +116,7 @@ export default function SignIn() {
           </div>
 
           <div className="mt-8 pt-8 border-t border-border text-center text-sm text-foreground/50">
-            <p>Demo credentials: Any valid email format with any password</p>
+            <p>Use the email and password you registered with.</p>
           </div>
         </div>
       </div>
