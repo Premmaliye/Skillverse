@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Send } from 'lucide-react';
+import { Search, Send, Sparkles, UserRound } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 
 function sortUserPair(firstId, secondId) {
@@ -16,6 +16,10 @@ function formatDateTime(dateValue) {
   });
 }
 
+function getInitial(name) {
+  return String(name || 'U').trim().charAt(0).toUpperCase() || 'U';
+}
+
 export default function Messages() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -28,6 +32,8 @@ export default function Messages() {
   const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState('');
   const [isSending, setIsSending] = useState(false);
+  const [conversationSearch, setConversationSearch] = useState('');
+  const messagesBottomRef = useRef(null);
 
   const selectedThread = useMemo(
     () => threads.find((thread) => thread.id === selectedThreadId) || null,
@@ -43,6 +49,20 @@ export default function Messages() {
   }, [selectedThread, currentUserId]);
 
   const selectedUserProfile = selectedUserId ? profilesMap[selectedUserId] : null;
+
+  const filteredThreads = useMemo(() => {
+    const query = conversationSearch.trim().toLowerCase();
+    if (!query) {
+      return threads;
+    }
+
+    return threads.filter((thread) => {
+      const partnerId = thread.user_a === currentUserId ? thread.user_b : thread.user_a;
+      const partner = profilesMap[partnerId];
+      const haystack = `${partner?.username || ''} ${partner?.city || ''}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [conversationSearch, threads, currentUserId, profilesMap]);
 
   const loadMessages = useCallback(async (threadId) => {
     if (!threadId) {
@@ -212,6 +232,10 @@ export default function Messages() {
     initialize();
   }, [navigate, searchParams, loadThreads]);
 
+  useEffect(() => {
+    messagesBottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [messages, selectedThreadId]);
+
   const selectThread = async (threadId) => {
     setSelectedThreadId(threadId);
     await loadMessages(threadId);
@@ -246,6 +270,13 @@ export default function Messages() {
     setIsSending(false);
   };
 
+  const handleDraftKeyDown = (event) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      sendMessage();
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="max-w-6xl mx-auto px-4 py-10">
@@ -262,33 +293,76 @@ export default function Messages() {
         </div>
       )}
 
+      <div className="rounded-2xl border border-border bg-[linear-gradient(135deg,#ffffff_0%,#f7f5fd_45%,#f3ecff_100%)] px-5 py-4 md:px-6 md:py-5 shadow-sm">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <p className="text-xs font-semibold tracking-[0.16em] text-primary/75 uppercase">Messages</p>
+            <h1 className="text-xl md:text-2xl font-extrabold tracking-tight text-foreground mt-0.5">Conversations</h1>
+          </div>
+          <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-white/80 px-3 py-1.5 text-xs font-medium text-primary">
+            <Sparkles size={14} />
+            {threads.length} active chat{threads.length === 1 ? '' : 's'}
+          </div>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)] gap-6">
-        <aside className="rounded-2xl border border-border bg-background p-4 h-fit lg:sticky lg:top-24">
+        <aside className="rounded-2xl border border-border bg-background/95 p-4 h-fit lg:sticky lg:top-24 shadow-sm">
           <h2 className="text-lg font-semibold mb-3">Conversations</h2>
+
+          <label className="relative block mb-3">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-foreground/45" />
+            <input
+              type="search"
+              value={conversationSearch}
+              onChange={(event) => setConversationSearch(event.target.value)}
+              placeholder="Search by name or city"
+              className="w-full rounded-xl border border-border bg-muted/70 py-2 pl-9 pr-3 text-sm text-foreground placeholder:text-foreground/45 outline-none focus:ring-2 focus:ring-primary/35"
+            />
+          </label>
 
           {threads.length === 0 ? (
             <p className="text-sm text-foreground/65">No conversations yet. Open a profile and click Message.</p>
+          ) : filteredThreads.length === 0 ? (
+            <p className="text-sm text-foreground/65">No matching conversations.</p>
           ) : (
             <div className="space-y-2 max-h-[70vh] overflow-auto pr-1">
-              {threads.map((thread) => {
+              {filteredThreads.map((thread) => {
                 const partnerId = thread.user_a === currentUserId ? thread.user_b : thread.user_a;
                 const partner = profilesMap[partnerId];
                 const isActive = thread.id === selectedThreadId;
+                const partnerName = partner?.username || 'User';
 
                 return (
                   <button
                     key={thread.id}
                     type="button"
                     onClick={() => selectThread(thread.id)}
-                    className={`w-full text-left rounded-xl border px-3 py-3 transition-colors ${
+                    className={`w-full text-left rounded-xl border px-3 py-3 transition-all ${
                       isActive
-                        ? 'border-primary bg-primary/5'
-                        : 'border-border bg-background hover:bg-foreground/[0.02]'
+                        ? 'border-primary/45 bg-primary/8 shadow-sm'
+                        : 'border-border bg-background hover:bg-foreground/[0.02] hover:border-primary/20'
                     }`}
                   >
-                    <p className="font-medium truncate">{partner?.username || 'User'}</p>
-                    <p className="text-xs text-foreground/60 truncate mt-1">{partner?.city || 'SkillVerse user'}</p>
-                    <p className="text-[11px] text-foreground/50 mt-1">{formatDateTime(thread.updated_at)}</p>
+                    <div className="flex items-start gap-3">
+                      {partner?.avatar_url ? (
+                        <img
+                          src={partner.avatar_url}
+                          alt={partnerName}
+                          className="h-10 w-10 rounded-xl object-cover border border-border"
+                        />
+                      ) : (
+                        <div className="h-10 w-10 rounded-xl border border-border bg-primary/10 text-primary font-bold text-sm flex items-center justify-center">
+                          {getInitial(partnerName)}
+                        </div>
+                      )}
+
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold truncate text-sm">{partnerName}</p>
+                        <p className="text-xs text-foreground/60 truncate mt-0.5">{partner?.city || 'SkillVerse user'}</p>
+                        <p className="text-[11px] text-foreground/45 mt-1">{formatDateTime(thread.updated_at)}</p>
+                      </div>
+                    </div>
                   </button>
                 );
               })}
@@ -296,17 +370,37 @@ export default function Messages() {
           )}
         </aside>
 
-        <section className="rounded-2xl border border-border bg-background p-4 md:p-6">
+        <section className="rounded-2xl border border-border bg-background p-4 md:p-6 shadow-sm">
           {selectedThread ? (
             <>
-              <div className="border-b border-border pb-4 mb-4">
-                <h3 className="text-xl font-semibold">{selectedUserProfile?.username || 'Conversation'}</h3>
-                <p className="text-sm text-foreground/60">{selectedUserProfile?.city || 'SkillVerse user'}</p>
+              <div className="border-b border-border pb-4 mb-4 flex items-center gap-3">
+                {selectedUserProfile?.avatar_url ? (
+                  <img
+                    src={selectedUserProfile.avatar_url}
+                    alt={selectedUserProfile?.username || 'Conversation'}
+                    className="h-11 w-11 rounded-xl object-cover border border-border"
+                  />
+                ) : (
+                  <div className="h-11 w-11 rounded-xl border border-border bg-primary/10 text-primary font-bold text-sm flex items-center justify-center">
+                    {getInitial(selectedUserProfile?.username || 'C')}
+                  </div>
+                )}
+
+                <div>
+                  <h3 className="text-xl font-semibold leading-tight">{selectedUserProfile?.username || 'Conversation'}</h3>
+                  <p className="text-sm text-foreground/60">{selectedUserProfile?.city || 'SkillVerse user'}</p>
+                </div>
               </div>
 
-              <div className="space-y-3 h-[48vh] overflow-auto pr-1">
+              <div className="space-y-3 h-[48vh] overflow-auto pr-1 rounded-xl bg-[linear-gradient(180deg,rgba(124,58,237,0.04)_0%,rgba(255,255,255,0.6)_100%)] p-3">
                 {messages.length === 0 ? (
-                  <p className="text-sm text-foreground/65">No messages yet. Start the conversation.</p>
+                  <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-center px-5">
+                    <div className="h-11 w-11 rounded-full bg-primary/12 text-primary flex items-center justify-center mb-3">
+                      <UserRound size={18} />
+                    </div>
+                    <p className="text-sm font-medium text-foreground">No messages yet</p>
+                    <p className="text-xs text-foreground/60 mt-1">Start the conversation with a quick intro.</p>
+                  </div>
                 ) : (
                   messages.map((message) => {
                     const isMine = message.sender_id === currentUserId;
@@ -317,10 +411,10 @@ export default function Messages() {
                         className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}
                       >
                         <div
-                          className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm ${
+                          className={`max-w-[82%] rounded-2xl px-3 py-2 text-sm shadow-[0_1px_3px_rgba(15,10,26,0.08)] ${
                             isMine
-                              ? 'bg-primary text-primary-foreground'
-                              : 'bg-foreground/[0.04] text-foreground'
+                              ? 'bg-[linear-gradient(135deg,#7c3aed_0%,#8b5cf6_100%)] text-primary-foreground rounded-br-md'
+                              : 'bg-white text-foreground border border-border rounded-bl-md'
                           }`}
                         >
                           <p className="whitespace-pre-line">{message.content}</p>
@@ -332,28 +426,38 @@ export default function Messages() {
                     );
                   })
                 )}
+                <div ref={messagesBottomRef} />
               </div>
 
-              <div className="mt-4 flex items-end gap-2">
+              <div className="mt-4 flex items-end gap-2 rounded-xl border border-border bg-muted/40 p-2">
                 <textarea
                   rows={2}
                   value={draft}
                   onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={handleDraftKeyDown}
                   placeholder="Type your message..."
-                  className="flex-1 rounded-xl border border-border px-3 py-2 bg-background focus:outline-none focus:ring-2 focus:ring-primary text-sm"
+                  className="flex-1 rounded-xl border border-border px-3 py-2 bg-background focus:outline-none focus:ring-2 focus:ring-primary text-sm resize-none"
                 />
                 <button
                   type="button"
                   onClick={sendMessage}
                   disabled={isSending || !draft.trim()}
-                  className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-70"
+                  className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-70 shadow-sm"
                 >
                   <Send size={16} /> {isSending ? 'Sending...' : 'Send'}
                 </button>
               </div>
             </>
           ) : (
-            <p className="text-sm text-foreground/65">Select a conversation to start messaging.</p>
+            <div className="min-h-[52vh] flex items-center justify-center">
+              <div className="text-center max-w-sm">
+                <div className="h-12 w-12 mx-auto mb-3 rounded-full bg-primary/12 text-primary flex items-center justify-center">
+                  <UserRound size={20} />
+                </div>
+                <p className="text-sm font-medium text-foreground">Select a conversation</p>
+                <p className="text-xs text-foreground/60 mt-1">Choose someone from the left to open your chat.</p>
+              </div>
+            </div>
           )}
         </section>
       </div>

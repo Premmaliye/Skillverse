@@ -3,9 +3,10 @@ import Landing from '../pages/Landing';
 import SignIn from '../pages/SignIn';
 import SignUp from '../pages/SignUp';
 import Home from '../pages/Home';
-import Profile from '../pages/Profile';
+import { Profile } from '../pages/Profile';
 import PublicProfile from '../pages/PublicProfile';
 import Marketplace from '../pages/Marketplace';
+import ProductCheckout from '../pages/ProductCheckout';
 import Messages from '../pages/Messages';
 import Onboarding from '../pages/Onboarding';
 import HireRequest from '../pages/HireRequest';
@@ -23,6 +24,7 @@ export default function AppRoutes() {
       <Route path="/profile/:profileId" element={<PublicProfile />} />
       <Route path="/hire/:profileId" element={<HireRequest />} />
       <Route path="/marketplace" element={<Marketplace />} />
+      <Route path="/marketplace/product/:productId" element={<ProductCheckout />} />
       <Route path="/messages" element={<Messages />} />
       <Route path="/notifications" element={<NotificationsDashboard />} />
     </Routes>

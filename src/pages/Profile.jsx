@@ -1,155 +1,166 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { BadgeCheck, Briefcase, ImagePlus, Mail, MapPin, Trash2, UserRound, Video } from 'lucide-react';
+import { Mail, MapPin, MessageCircle, Star, CalendarDays, Sparkles, Heart, Share2 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
-import { apiGet, apiPost, apiPut } from '../lib/apiClient';
 
-export default function Profile() {
+function RatingStars({ rating }) {
+  const safeRating = Number.isFinite(rating) ? Math.max(0, Math.min(5, rating)) : 0;
+  return (
+    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+      {[1, 2, 3, 4, 5].map((value) => (
+        <Star
+          key={value}
+          size={15}
+          color={value <= safeRating ? '#f59e0b' : '#d1d5db'}
+          fill={value <= safeRating ? '#f59e0b' : 'none'}
+        />
+      ))}
+    </div>
+  );
+}
+
+export function Profile() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const requestedProfileId = searchParams.get('id');
+
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
-  const [userId, setUserId] = useState('');
-  const [viewedUserId, setViewedUserId] = useState('');
-  const [postText, setPostText] = useState('');
-  const [postMediaFile, setPostMediaFile] = useState(null);
-  const [postMediaPreview, setPostMediaPreview] = useState('');
-  const [postMediaType, setPostMediaType] = useState('');
-  const [isPosting, setIsPosting] = useState(false);
-  const [isPayingMonetization, setIsPayingMonetization] = useState(false);
-  const [isSavingTerms, setIsSavingTerms] = useState(false);
-  const [feedLoading, setFeedLoading] = useState(true);
-  const [feedError, setFeedError] = useState('');
-  const [posts, setPosts] = useState([]);
-  const [hireTerms, setHireTerms] = useState('No custom terms added yet.');
+  const [currentUserId, setCurrentUserId] = useState('');
   const [profile, setProfile] = useState({
-    username: '',
-    email: '',
-    gender: '',
-    age: '',
-    city: '',
-    about: '',
-    experience: '',
-    topSkills: [],
-    avatarUrl: '',
-    isMonetized: false
+    id: '',
+    username: 'SkillVerse User',
+    city: 'City not set',
+    about: 'Add an about section to introduce yourself.',
+    experience: 'No professional title added yet.',
+    avatar_url: '',
+    top_skills: [],
+    is_monetized: false,
+    monetization_rate: null,
+    created_at: '',
   });
-  const isOwnProfile = !viewedUserId || viewedUserId === userId;
-  const profileTitle = isOwnProfile ? 'My Profile' : 'Profile';
-
-  const formatPostDate = (dateString) => {
-    if (!dateString) {
-      return 'Just now';
-    }
-
-    return new Date(dateString).toLocaleString([], {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
-
-  const resetPostDraft = () => {
-    setPostText('');
-    setPostMediaFile(null);
-    setPostMediaPreview('');
-    setPostMediaType('');
-  };
-
-  const loadPosts = useCallback(async (ownerId) => {
-    if (!ownerId) {
-      setPosts([]);
-      setFeedLoading(false);
-      return;
-    }
-
-    setFeedError('');
-    setFeedLoading(true);
-
-    const { data, error: postsError } = await supabase
-      .from('skill_posts')
-      .select('id, user_id, author_username, author_avatar_url, content, media_url, media_path, media_type, created_at')
-      .eq('user_id', ownerId)
-      .order('created_at', { ascending: false });
-
-    if (postsError) {
-      setFeedError(postsError.message || 'Unable to load posts.');
-      setPosts([]);
-    } else {
-      setPosts(Array.isArray(data) ? data : []);
-    }
-
-    setFeedLoading(false);
-  }, []);
+  const [accountEmail, setAccountEmail] = useState('');
+  const [recentPosts, setRecentPosts] = useState([]);
+  const [postLikes, setPostLikes] = useState({});
+  const [likeSavingPostId, setLikeSavingPostId] = useState('');
+  const [shareStatusPostId, setShareStatusPostId] = useState('');
+  const [reviewStats, setReviewStats] = useState({ count: 0, average: 0 });
 
   useEffect(() => {
     const loadProfile = async () => {
       setError('');
       setIsLoading(true);
 
-      const { data: userData, error: userError } = await supabase.auth.getUser();
-      if (userError || !userData?.user) {
-        navigate('/signin');
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (authError || !authData?.user?.id) {
+        navigate('/signin', { replace: true });
         return;
       }
 
-      const user = userData.user;
-      setUserId(user.id);
-      const targetUserId = searchParams.get('id') || user.id;
-      setViewedUserId(targetUserId);
+      const userId = authData.user.id;
+      setCurrentUserId(userId);
+      const userEmail = authData.user.email || '';
 
-      const { data: profileData, error: profileError } = await supabase
-        .from('profiles')
-        .select('username, gender, age, city, about, experience, top_skills, avatar_url, is_monetized')
-        .eq('id', targetUserId)
-        .maybeSingle();
-
-      if (profileError) {
-        setError(profileError.message || 'Unable to load profile data.');
+      if (requestedProfileId && requestedProfileId !== userId) {
+        navigate(`/profile/${requestedProfileId}`, { replace: true });
+        return;
       }
 
-      const fallbackName = user.user_metadata?.username || user.user_metadata?.full_name || user.email || 'User';
-      const fallbackAvatar = user.user_metadata?.avatar_url || '';
-      const profileUserName = profileData?.username || (targetUserId === user.id ? fallbackName : 'User');
+      setAccountEmail(userEmail);
 
-      setProfile({
-        username: profileUserName,
-        email: user.email || '',
-        gender: profileData?.gender || 'Not set',
-        age: profileData?.age ? String(profileData.age) : 'Not set',
-        city: profileData?.city || 'Not set',
-        about: profileData?.about || 'Not added yet.',
-        experience: profileData?.experience || 'Not added yet.',
-        topSkills: Array.isArray(profileData?.top_skills) ? profileData.top_skills : [],
-        avatarUrl: profileData?.avatar_url || fallbackAvatar,
-        isMonetized: Boolean(profileData?.is_monetized)
-      });
+      const [{ data: profileData, error: profileError }, { data: postsData, error: postsError }, { data: reviewsData, error: reviewsError }] = await Promise.all([
+        supabase
+          .from('profiles')
+          .select('id,username,city,about,experience,avatar_url,top_skills,is_monetized,monetization_rate,created_at')
+          .eq('id', userId)
+          .maybeSingle(),
+        supabase
+          .from('skill_posts')
+          .select('id,content,media_url,media_type,created_at')
+          .eq('user_id', userId)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('profile_reviews')
+          .select('rating')
+          .eq('profile_id', userId),
+      ]);
 
-      await loadPosts(targetUserId);
+      if (profileError) {
+        setError(profileError.message || 'Unable to load your profile.');
+        setIsLoading(false);
+        return;
+      }
 
-      if (targetUserId === user.id) {
-        try {
-          const termsResponse = await apiGet(`/api/hiring/terms/${user.id}`);
-          setHireTerms(termsResponse.data?.terms_text || 'No custom terms added yet.');
-        } catch {
-          setHireTerms('No custom terms added yet.');
+      if (postsError) {
+        setError(postsError.message || 'Unable to load recent posts.');
+      }
+
+      if (reviewsError) {
+        setError(reviewsError.message || 'Unable to load ratings.');
+      }
+
+      const normalizedPosts = Array.isArray(postsData) ? postsData : [];
+      const postIds = normalizedPosts.map((post) => post.id);
+
+      let likesByPost = {};
+      if (postIds.length > 0) {
+        const { data: likeRows, error: likesError } = await supabase
+          .from('post_likes')
+          .select('post_id,user_id')
+          .in('post_id', postIds);
+
+        if (likesError) {
+          setError(likesError.message || 'Unable to load post likes.');
+        } else {
+          const likesCountMap = {};
+          const likedByMeMap = {};
+
+          (likeRows || []).forEach((row) => {
+            likesCountMap[row.post_id] = (likesCountMap[row.post_id] || 0) + 1;
+            if (row.user_id === userId) likedByMeMap[row.post_id] = true;
+          });
+
+          likesByPost = postIds.reduce((acc, id) => {
+            acc[id] = {
+              count: likesCountMap[id] || 0,
+              likedByMe: Boolean(likedByMeMap[id]),
+            };
+            return acc;
+          }, {});
         }
       }
 
+      const normalizedProfile = {
+        id: profileData?.id || userId,
+        username: profileData?.username || 'SkillVerse User',
+        city: profileData?.city || 'City not set',
+        about: profileData?.about || 'Add an about section to introduce yourself.',
+        experience: profileData?.experience || 'No professional title added yet.',
+        avatar_url: profileData?.avatar_url || '',
+        top_skills: Array.isArray(profileData?.top_skills) ? profileData.top_skills : [],
+        is_monetized: Boolean(profileData?.is_monetized),
+        monetization_rate: profileData?.monetization_rate ?? null,
+        created_at: profileData?.created_at || '',
+      };
+
+      const reviewRows = Array.isArray(reviewsData) ? reviewsData : [];
+      const ratingTotal = reviewRows.reduce((sum, item) => sum + Number(item.rating || 0), 0);
+      const ratingAverage = reviewRows.length ? ratingTotal / reviewRows.length : 0;
+
+      setProfile(normalizedProfile);
+      setRecentPosts(normalizedPosts);
+      setPostLikes(likesByPost);
+      setReviewStats({ count: reviewRows.length, average: ratingAverage });
       setIsLoading(false);
     };
 
     loadProfile();
-  }, [navigate, loadPosts, searchParams]);
+  }, [navigate, requestedProfileId]);
 
-  const initials = useMemo(() => {
-    if (!profile.username) {
-      return 'U';
-    }
-
-    return profile.username
+  const avatarInitials = useMemo(() => {
+    const name = String(profile.username || 'S').trim();
+    if (!name) return 'S';
+    return name
       .split(' ')
       .filter(Boolean)
       .slice(0, 2)
@@ -157,530 +168,229 @@ export default function Profile() {
       .join('');
   }, [profile.username]);
 
-  const handlePostMediaChange = (event) => {
-    const file = event.target.files?.[0];
+  const joinedText = useMemo(() => {
+    if (!profile.created_at) return 'Recently joined SkillVerse';
+    return `Joined ${new Date(profile.created_at).toLocaleString([], { month: 'short', year: 'numeric' })}`;
+  }, [profile.created_at]);
 
-    if (!file) {
+  const refreshPostLikes = async (postId) => {
+    const { data, error: likesError } = await supabase
+      .from('post_likes')
+      .select('post_id,user_id')
+      .eq('post_id', postId);
+
+    if (likesError) {
+      setError(likesError.message || 'Unable to refresh likes.');
       return;
     }
 
-    const isImage = file.type.startsWith('image/');
-    const isVideo = file.type.startsWith('video/');
-
-    if (!isImage && !isVideo) {
-      setFeedError('Only image or video files are allowed.');
-      return;
-    }
-
-    const sizeLimit = isVideo ? 20 * 1024 * 1024 : 5 * 1024 * 1024;
-    if (file.size > sizeLimit) {
-      setFeedError(isVideo ? 'Video should be 20MB or smaller.' : 'Image should be 5MB or smaller.');
-      return;
-    }
-
-    setFeedError('');
-    setPostMediaFile(file);
-    setPostMediaType(isVideo ? 'video' : 'image');
-    setPostMediaPreview(URL.createObjectURL(file));
+    const rows = Array.isArray(data) ? data : [];
+    setPostLikes((prev) => ({
+      ...prev,
+      [postId]: {
+        count: rows.length,
+        likedByMe: rows.some((row) => row.user_id === currentUserId),
+      },
+    }));
   };
 
-  const handleCreatePost = async (event) => {
-    event.preventDefault();
+  const toggleLike = async (postId) => {
+    if (!currentUserId || !postId) return;
+    const state = postLikes[postId] || { count: 0, likedByMe: false };
+    setLikeSavingPostId(postId);
 
-    if (!isOwnProfile) {
-      setFeedError('You can only post on your own profile.');
-      return;
-    }
-
-    const cleanText = postText.trim();
-    if (!cleanText && !postMediaFile) {
-      setFeedError('Write something or add media before posting.');
-      return;
-    }
-
-    if (!userId) {
-      setFeedError('Please sign in again to create a post.');
-      return;
-    }
-
-    setIsPosting(true);
-    setFeedError('');
-
-    let mediaUrl = null;
-    let mediaPath = null;
-    let mediaType = null;
-
-    if (postMediaFile) {
-      const extension = postMediaFile.name.split('.').pop()?.toLowerCase() || 'bin';
-      mediaPath = `${userId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${extension}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from('post-media')
-        .upload(mediaPath, postMediaFile, {
-          cacheControl: '3600',
-          upsert: false
-        });
-
-      if (uploadError) {
-        setIsPosting(false);
-        setFeedError(uploadError.message || 'Failed to upload media.');
+    if (state.likedByMe) {
+      const { error: unlikeError } = await supabase
+        .from('post_likes')
+        .delete()
+        .eq('post_id', postId)
+        .eq('user_id', currentUserId);
+      if (unlikeError) {
+        setError(unlikeError.message || 'Unable to remove like.');
+        setLikeSavingPostId('');
         return;
       }
-
-      const { data: publicMedia } = supabase.storage
-        .from('post-media')
-        .getPublicUrl(mediaPath);
-
-      mediaUrl = publicMedia?.publicUrl || null;
-      mediaType = postMediaType;
-    }
-
-    const { error: insertError } = await supabase
-      .from('skill_posts')
-      .insert({
-        user_id: userId,
-        author_username: profile.username,
-        author_avatar_url: profile.avatarUrl || null,
-        content: cleanText || null,
-        media_url: mediaUrl,
-        media_path: mediaPath,
-        media_type: mediaType
-      });
-
-    if (insertError) {
-      if (mediaPath) {
-        await supabase.storage.from('post-media').remove([mediaPath]);
-      }
-
-      setIsPosting(false);
-      setFeedError(insertError.message || 'Failed to create post.');
-      return;
-    }
-
-    resetPostDraft();
-    await loadPosts(userId);
-    setIsPosting(false);
-  };
-
-  const handleDeletePost = async (post) => {
-    if (!post || post.user_id !== userId) {
-      return;
-    }
-
-    setFeedError('');
-
-    const { error: deleteError } = await supabase
-      .from('skill_posts')
-      .delete()
-      .eq('id', post.id)
-      .eq('user_id', userId);
-
-    if (deleteError) {
-      setFeedError(deleteError.message || 'Unable to delete post.');
-      return;
-    }
-
-    if (post.media_path) {
-      await supabase.storage.from('post-media').remove([post.media_path]);
-    }
-
-    await loadPosts(userId);
-  };
-
-  const loadRazorpayScript = async () => {
-    if (window.Razorpay) {
-      return true;
-    }
-
-    return new Promise((resolve) => {
-      const script = document.createElement('script');
-      script.src = 'https://checkout.razorpay.com/v1/checkout.js';
-      script.onload = () => resolve(true);
-      script.onerror = () => resolve(false);
-      document.body.appendChild(script);
-    });
-  };
-
-  const startMonetizationPayment = async () => {
-    if (!isOwnProfile || !userId || profile.isMonetized) {
-      return;
-    }
-
-    setError('');
-    setIsPayingMonetization(true);
-
-    try {
-      const loaded = await loadRazorpayScript();
-      if (!loaded) {
-        setError('Unable to load Razorpay checkout.');
-        setIsPayingMonetization(false);
+    } else {
+      const { error: likeError } = await supabase
+        .from('post_likes')
+        .insert({ post_id: postId, user_id: currentUserId });
+      if (likeError) {
+        setError(likeError.message || 'Unable to like post.');
+        setLikeSavingPostId('');
         return;
       }
-
-      const { data: sessionData } = await supabase.auth.getSession();
-      const sessionUser = sessionData?.session?.user;
-
-      const orderResponse = await apiPost('/api/monetization/create-order', {});
-      const { order, razorpayKeyId } = orderResponse.data;
-
-      const rzp = new window.Razorpay({
-        key: razorpayKeyId,
-        amount: order.amount,
-        currency: order.currency,
-        name: 'SkillVerse Monetization',
-        description: 'Account monetization fee (INR 200)',
-        order_id: order.id,
-        prefill: {
-          name: profile.username || sessionUser?.user_metadata?.full_name || '',
-          email: profile.email || sessionUser?.email || ''
-        },
-        theme: {
-          color: '#aa3bff'
-        },
-        handler: async (response) => {
-          try {
-            await apiPost('/api/monetization/verify-payment', {
-              razorpay_order_id: response.razorpay_order_id,
-              razorpay_payment_id: response.razorpay_payment_id,
-              razorpay_signature: response.razorpay_signature
-            });
-
-            setProfile((prev) => ({
-              ...prev,
-              isMonetized: true
-            }));
-          } catch (verifyError) {
-            setError(verifyError.message || 'Payment verification failed.');
-          } finally {
-            setIsPayingMonetization(false);
-          }
-        }
-      });
-
-      rzp.on('payment.failed', () => {
-        setError('Payment failed. Please try again.');
-        setIsPayingMonetization(false);
-      });
-
-      rzp.open();
-    } catch (paymentError) {
-      setError(paymentError.message || 'Unable to start monetization payment.');
-      setIsPayingMonetization(false);
     }
+
+    await refreshPostLikes(postId);
+    setLikeSavingPostId('');
   };
 
-  const handleSaveHireTerms = async () => {
-    if (!isOwnProfile) {
-      return;
-    }
-
-    setIsSavingTerms(true);
-    setError('');
+  const sharePost = async (post) => {
+    const text = `${profile.username} on SkillVerse:\n${post.content || ''}`.trim();
+    const url = `${window.location.origin}/profile/${profile.id}`;
 
     try {
-      await apiPut('/api/hiring/terms', { termsText: hireTerms });
-    } catch (saveError) {
-      setError(saveError.message || 'Unable to save terms and conditions.');
-    } finally {
-      setIsSavingTerms(false);
+      if (navigator.share) {
+        await navigator.share({ title: 'SkillVerse post', text, url });
+      } else {
+        await navigator.clipboard.writeText(`${text}\n\n${url}`);
+        setShareStatusPostId(post.id);
+        setTimeout(() => setShareStatusPostId(''), 1800);
+      }
+    } catch {
+      try {
+        await navigator.clipboard.writeText(`${text}\n\n${url}`);
+        setShareStatusPostId(post.id);
+        setTimeout(() => setShareStatusPostId(''), 1800);
+      } catch {
+        setError('Unable to share this post.');
+      }
     }
   };
 
   if (isLoading) {
     return (
-      <div className="max-w-6xl mx-auto px-4 py-10">
-        <div className="rounded-2xl border border-border bg-background p-6 md:p-8 animate-pulse">
-          <div className="h-8 w-52 bg-primary/10 rounded mb-4" />
-          <div className="h-4 w-72 bg-primary/10 rounded" />
-        </div>
+      <div style={{ maxWidth: 1140, margin: '0 auto', padding: '28px 20px 36px' }}>
+        <div className="skeleton" style={{ height: 250, borderRadius: 26, marginBottom: 18 }} />
+        <div className="skeleton" style={{ height: 420, borderRadius: 20 }} />
       </div>
     );
   }
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8 md:py-10">
-      {error && (
-        <div className="mb-6 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-          {error}
-        </div>
-      )}
+    <div style={{ maxWidth: 1140, margin: '0 auto', padding: '26px 20px 38px' }}>
+      {error && <div className="alert-error" style={{ marginBottom: 16 }}>{error}</div>}
 
-      <section className="rounded-2xl border border-border bg-gradient-to-br from-primary/10 via-background to-background p-6 md:p-8 shadow-sm">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
-          <div className="flex items-start gap-4">
-            <div className="shrink-0">
-              {profile.avatarUrl ? (
-                <img
-                  src={profile.avatarUrl}
-                  alt="Profile avatar"
-                  className="h-20 w-20 md:h-24 md:w-24 rounded-2xl object-cover border border-primary/30"
-                />
-              ) : (
-                <div className="h-20 w-20 md:h-24 md:w-24 rounded-2xl bg-primary/20 border border-primary/30 flex items-center justify-center text-2xl font-bold text-primary">
-                  {initials || <UserRound size={24} />}
-                </div>
-              )}
-            </div>
+      <section className="profile-hero-shell animate-fade-in">
+        <div className="profile-cover" />
+        <div className="profile-head-row">
+          {profile.avatar_url ? (
+            <img src={profile.avatar_url} alt={profile.username} className="profile-head-avatar" />
+          ) : (
+            <div className="profile-head-avatar profile-head-avatar-fallback">{avatarInitials}</div>
+          )}
 
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-2xl md:text-3xl font-bold">{profile.username}</h1>
-                <BadgeCheck size={20} className="text-primary" />
-                {profile.isMonetized && (
-                  <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-emerald-700">
-                    Monetized
-                  </span>
-                )}
-              </div>
-
-              <p className="mt-1 text-sm text-foreground/60">{profileTitle}</p>
-
-              <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-foreground/70">
-                <span className="inline-flex items-center gap-1.5"><Mail size={16} /> {profile.email}</span>
-                <span className="inline-flex items-center gap-1.5"><MapPin size={16} /> {profile.city}</span>
-                {!isOwnProfile && (
-                  <Link
-                    to={`/hire/${viewedUserId}`}
-                    className="inline-flex items-center rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-                  >
-                    Hire
-                  </Link>
-                )}
-              </div>
+          <div className="profile-head-meta">
+            <h1>{profile.username}</h1>
+            <p>{profile.experience}</p>
+            <div className="profile-inline-meta">
+              <span><MapPin size={14} /> {profile.city}</span>
+              <span><CalendarDays size={14} /> {joinedText}</span>
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-3 w-full md:w-auto">
-            <div className="rounded-xl border border-border bg-background p-4 text-center min-w-[90px]">
-              <p className="text-lg font-bold">{profile.age}</p>
-              <p className="text-xs text-foreground/60">Age</p>
-            </div>
-            <div className="rounded-xl border border-border bg-background p-4 text-center min-w-[90px]">
-              <p className="text-lg font-bold">{profile.gender}</p>
-              <p className="text-xs text-foreground/60">Gender</p>
-            </div>
-            <div className="rounded-xl border border-border bg-background p-4 text-center min-w-[90px]">
-              <p className="text-lg font-bold">{profile.topSkills.length}</p>
-              <p className="text-xs text-foreground/60">Skills</p>
-            </div>
-          </div>
+          <Link to={`/profile/${profile.id}`} className="profile-public-link">
+            View public profile
+          </Link>
         </div>
       </section>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
-        <section className="lg:col-span-2 space-y-6">
-          {isOwnProfile && (
-            <article className="rounded-2xl border border-border bg-background p-6">
-              <h2 className="text-xl font-semibold mb-3">Create Post</h2>
-              <p className="text-sm text-foreground/70 mb-4">Share updates, images, or short videos with the SkillVerse community.</p>
+      <section className="profile-content-grid animate-fade-in delay-100">
+        <aside className="profile-side-card">
+          <h3>Contact</h3>
 
-              <form onSubmit={handleCreatePost} className="space-y-4">
-                <textarea
-                  value={postText}
-                  onChange={(event) => setPostText(event.target.value)}
-                  placeholder="What are you working on today?"
-                  rows={4}
-                  className="w-full rounded-xl border border-border px-3 py-2 bg-background focus:outline-none focus:ring-2 focus:ring-primary"
-                />
+          <div className="profile-contact-item">
+            <Mail size={14} />
+            <span>{accountEmail || 'Email not available'}</span>
+          </div>
+          <div className="profile-contact-item">
+            <MapPin size={14} />
+            <span>{profile.city}</span>
+          </div>
 
-                {postMediaPreview && (
-                  <div className="rounded-xl border border-border overflow-hidden bg-foreground/[0.02]">
-                    {postMediaType === 'video' ? (
-                      <video src={postMediaPreview} controls className="w-full max-h-[360px] bg-black" />
-                    ) : (
-                      <img src={postMediaPreview} alt="Post preview" className="w-full max-h-[360px] object-cover" />
-                    )}
-                  </div>
-                )}
+          <Link to="/messages" className="profile-chat-btn">
+            <MessageCircle size={16} />
+            Open chats
+          </Link>
 
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <label className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm cursor-pointer hover:bg-foreground/[0.03] transition-colors">
-                    {postMediaType === 'video' ? <Video size={16} /> : <ImagePlus size={16} />}
-                    Add image/video
-                    <input
-                      type="file"
-                      accept="image/*,video/*"
-                      onChange={handlePostMediaChange}
-                      className="hidden"
-                    />
-                  </label>
+          <div className="profile-rating-box">
+            <p className="profile-rating-value">{reviewStats.average ? reviewStats.average.toFixed(1) : '0.0'}</p>
+            <RatingStars rating={Math.round(reviewStats.average)} />
+            <p className="profile-rating-caption">{reviewStats.count} review{reviewStats.count === 1 ? '' : 's'}</p>
+          </div>
+        </aside>
 
-                  <div className="flex items-center gap-2">
-                    {(postText || postMediaFile) && (
-                      <button
-                        type="button"
-                        onClick={resetPostDraft}
-                        className="rounded-lg border border-border px-3 py-2 text-sm hover:bg-foreground/[0.03] transition-colors"
-                      >
-                        Clear
-                      </button>
-                    )}
-                    <button
-                      type="submit"
-                      disabled={isPosting}
-                      className="rounded-lg bg-primary text-primary-foreground px-4 py-2 text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-70"
-                    >
-                      {isPosting ? 'Posting...' : 'Post'}
-                    </button>
-                  </div>
-                </div>
-              </form>
-            </article>
-          )}
-
-          <article className="rounded-2xl border border-border bg-background p-6">
-            <h2 className="text-xl font-semibold mb-3">About</h2>
-            <p className="text-foreground/80 leading-relaxed">{profile.about}</p>
-          </article>
-
-          <article className="rounded-2xl border border-border bg-background p-6">
-            <h2 className="text-xl font-semibold mb-3">Experience</h2>
-            <p className="text-foreground/80 leading-relaxed whitespace-pre-line">{profile.experience}</p>
-          </article>
-
-          <article className="rounded-2xl border border-border bg-background p-6">
-            <h2 className="text-xl font-semibold mb-3">My Posts</h2>
-            <p className="mb-4 text-sm text-foreground/70">Only your own posts are shown here.</p>
-
-            {feedError && (
-              <div className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {feedError}
+        <div className="profile-main-stack">
+          <div className="profile-main-row">
+            <article className="profile-intro-card">
+              <div>
+                <p className="profile-card-label">INTRODUCTION</p>
+                <h2>{profile.experience}</h2>
               </div>
-            )}
-
-            {feedLoading ? (
-              <div className="space-y-3">
-                <div className="h-20 rounded-lg bg-primary/10 animate-pulse" />
-                <div className="h-20 rounded-lg bg-primary/10 animate-pulse" />
-              </div>
-            ) : posts.length === 0 ? (
-              <p className="text-sm text-foreground/65">No posts yet. Be the first to share something.</p>
-            ) : (
-              <div className="space-y-4">
-                {posts.map((post) => {
-                  const postOwner = post.author_username || 'SkillVerse User';
-                  const postAvatar = post.author_avatar_url || '';
-                  const ownerInitial = postOwner?.[0]?.toUpperCase() || 'U';
-                  const isOwnPost = post.user_id === userId;
-
-                  return (
-                    <article key={post.id} className="rounded-xl border border-border p-4">
-                      <div className="flex items-start justify-between gap-3 mb-3">
-                        <div className="flex items-center gap-3">
-                          {postAvatar ? (
-                            <img src={postAvatar} alt={postOwner} className="h-10 w-10 rounded-full object-cover border border-border" />
-                          ) : (
-                            <div className="h-10 w-10 rounded-full border border-border bg-primary/10 flex items-center justify-center text-sm font-semibold text-primary">
-                              {ownerInitial}
-                            </div>
-                          )}
-                          <div>
-                            <p className="font-medium leading-tight">{postOwner}</p>
-                            <p className="text-xs text-foreground/60">{formatPostDate(post.created_at)}</p>
-                          </div>
-                        </div>
-
-                        {isOwnPost && (
-                          <button
-                            type="button"
-                            onClick={() => handleDeletePost(post)}
-                            className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-xs text-foreground/70 hover:text-destructive hover:border-destructive/40 transition-colors"
-                          >
-                            <Trash2 size={14} /> Delete
-                          </button>
-                        )}
-                      </div>
-
-                      {post.content && <p className="text-sm text-foreground/85 whitespace-pre-line mb-3">{post.content}</p>}
-
-                      {post.media_url && post.media_type === 'video' && (
-                        <video src={post.media_url} controls className="w-full max-h-[420px] rounded-lg bg-black" />
-                      )}
-
-                      {post.media_url && post.media_type === 'image' && (
-                        <img src={post.media_url} alt="Post media" className="w-full max-h-[420px] rounded-lg object-cover" />
-                      )}
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-          </article>
-        </section>
-
-        <section className="space-y-6">
-          {isOwnProfile && (
-            <article className="rounded-2xl border border-border bg-background p-6">
-              <h2 className="text-xl font-semibold mb-3">Monetize Account</h2>
-              <p className="text-sm text-foreground/70 mb-4">
-                To monetize your account, pay a fixed one-time amount of INR 200 via Razorpay.
-              </p>
-
-              <div className="space-y-4">
-                <div className="rounded-xl border border-border bg-background px-3 py-3">
-                  <p className="text-sm font-medium">Monetization status</p>
-                  <p className="text-xs text-foreground/60 mt-1">
-                    {profile.isMonetized ? 'Active (payment completed)' : 'Not active yet'}
-                  </p>
-                </div>
-
-                {!profile.isMonetized && (
-                  <button
-                    type="button"
-                    onClick={startMonetizationPayment}
-                    disabled={isPayingMonetization}
-                    className="inline-flex w-full items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-70"
-                  >
-                    {isPayingMonetization ? 'Opening Razorpay...' : 'Pay INR 200 & Monetize'}
-                  </button>
-                )}
-              </div>
-            </article>
-          )}
-
-          {isOwnProfile && (
-            <article className="rounded-2xl border border-border bg-background p-6">
-              <h2 className="text-xl font-semibold mb-3">Hire Terms & Conditions</h2>
-              <p className="text-sm text-foreground/70 mb-4">
-                These terms are shown before someone sends you a hiring request.
-              </p>
-              <textarea
-                rows={7}
-                value={hireTerms}
-                onChange={(event) => setHireTerms(event.target.value)}
-                className="w-full rounded-xl border border-border px-3 py-2 bg-background focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-              <button
-                type="button"
-                onClick={handleSaveHireTerms}
-                disabled={isSavingTerms}
-                className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-70"
-              >
-                {isSavingTerms ? 'Saving...' : 'Save terms'}
-              </button>
-            </article>
-          )}
-
-          <article className="rounded-2xl border border-border bg-background p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <Briefcase size={18} className="text-primary" />
-              <h2 className="text-xl font-semibold">Top Skills</h2>
-            </div>
-
-            {profile.topSkills.length > 0 ? (
-              <div className="flex flex-wrap gap-2">
-                {profile.topSkills.map((skill) => (
-                  <span key={skill} className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1.5 text-sm bg-background">
-                    {skill}
-                  </span>
+              <p>{profile.about}</p>
+              <div className="profile-chip-list">
+                {(profile.top_skills.length ? profile.top_skills : ['Add your top skills in onboarding']).slice(0, 5).map((skill) => (
+                  <span key={skill} className="profile-chip">{skill}</span>
                 ))}
               </div>
+            </article>
+
+            <article className="profile-action-card">
+              <p className="profile-card-label">CREATOR MODE</p>
+              <h3>{profile.is_monetized ? 'Monetized profile' : 'Standard profile'}</h3>
+              <p>
+                {profile.is_monetized
+                  ? `Current request price: ₹${Number(profile.monetization_rate || 0).toFixed(0)}`
+                  : 'Enable monetization in onboarding to accept paid collaboration requests.'}
+              </p>
+              <Link to="/onboarding" className="profile-action-link">
+                <Sparkles size={15} />
+                Update profile setup
+              </Link>
+            </article>
+          </div>
+
+          <article className="profile-posts-card">
+            <div className="profile-posts-head">
+              <h3>Your posts</h3>
+              <Link to="/home">Go to feed</Link>
+            </div>
+
+            {recentPosts.length === 0 ? (
+              <p className="profile-empty-text">You have not posted anything yet.</p>
             ) : (
-              <p className="text-sm text-foreground/65">No skills added yet.</p>
+              <div className="profile-post-list">
+                {recentPosts.map((post) => (
+                  <div key={post.id} className="profile-post-item">
+                    {post.content && <p>{post.content}</p>}
+                    {post.media_url && post.media_type === 'image' && (
+                      <img src={post.media_url} alt="Post media" className="profile-post-media" />
+                    )}
+                    {post.media_url && post.media_type === 'video' && (
+                      <video src={post.media_url} controls className="profile-post-media" />
+                    )}
+                    {!post.content && !post.media_url && <p>Shared an update</p>}
+                    <div className="profile-post-actions">
+                      <button
+                        type="button"
+                        className={`profile-post-action-btn ${postLikes[post.id]?.likedByMe ? 'is-active' : ''}`}
+                        onClick={() => toggleLike(post.id)}
+                        disabled={likeSavingPostId === post.id}
+                      >
+                        <Heart size={15} fill={postLikes[post.id]?.likedByMe ? '#ef4444' : 'none'} />
+                        {likeSavingPostId === post.id
+                          ? 'Saving...'
+                          : `Like${postLikes[post.id]?.count ? ` (${postLikes[post.id].count})` : ''}`}
+                      </button>
+                      <button
+                        type="button"
+                        className="profile-post-action-btn"
+                        onClick={() => sharePost(post)}
+                      >
+                        <Share2 size={15} />
+                        {shareStatusPostId === post.id ? 'Copied' : 'Share'}
+                      </button>
+                    </div>
+                    <span>{new Date(post.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                  </div>
+                ))}
+              </div>
             )}
           </article>
-        </section>
-      </div>
+        </div>
+      </section>
     </div>
   );
 }
+
+export default Profile;

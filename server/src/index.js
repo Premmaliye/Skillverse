@@ -75,6 +75,13 @@ const requestStatuses = {
 
 const monetizationAmountInr = 200;
 
+const productOrderStatuses = {
+  pending: 'pending',
+  paid: 'paid',
+  failed: 'failed',
+  cancelled: 'cancelled'
+};
+
 function asyncHandler(handler) {
   return function wrappedHandler(req, res, next) {
     Promise.resolve(handler(req, res, next)).catch(next);
@@ -112,6 +119,10 @@ async function requireAuth(req, res, next) {
 function validatePositiveAmount(amount) {
   const numeric = Number(amount);
   return !Number.isNaN(numeric) && numeric > 0;
+}
+
+function sanitizeText(value) {
+  return String(value || '').trim();
 }
 
 async function createNotification({ userId, type, title, message, metadata = {} }) {
@@ -677,6 +688,242 @@ app.post('/api/monetization/verify-payment', requireAuth, asyncHandler(async (re
   });
 
   return res.json({ success: true, isMonetized: true });
+}));
+
+app.get('/api/products/:productId', requireAuth, asyncHandler(async (req, res) => {
+  const { productId } = req.params;
+
+  const { data: productData, error: productError } = await adminSupabase
+    .from('profile_products')
+    .select('id,seller_id,title,category,description,price,product_url,image_url,is_active,created_at')
+    .eq('id', productId)
+    .eq('is_active', true)
+    .maybeSingle();
+
+  if (productError) {
+    return res.status(400).json({ error: productError.message });
+  }
+
+  if (!productData) {
+    return res.status(404).json({ error: 'Product not found.' });
+  }
+
+  const { data: sellerData, error: sellerError } = await adminSupabase
+    .from('profiles')
+    .select('id,username,city,avatar_url')
+    .eq('id', productData.seller_id)
+    .maybeSingle();
+
+  if (sellerError) {
+    return res.status(400).json({ error: sellerError.message });
+  }
+
+  return res.json({
+    data: {
+      ...productData,
+      seller: sellerData || null
+    }
+  });
+}));
+
+app.post('/api/products/:productId/create-order', requireAuth, asyncHandler(async (req, res) => {
+  const { productId } = req.params;
+  const {
+    customerName,
+    customerEmail,
+    customerMobile,
+    addressLine1,
+    addressLine2,
+    city,
+    state,
+    pincode
+  } = req.body;
+
+  const cleanName = sanitizeText(customerName);
+  const cleanEmail = sanitizeText(customerEmail);
+  const cleanMobile = sanitizeText(customerMobile);
+  const cleanAddressLine1 = sanitizeText(addressLine1);
+  const cleanAddressLine2 = sanitizeText(addressLine2);
+  const cleanCity = sanitizeText(city);
+  const cleanState = sanitizeText(state);
+  const cleanPincode = sanitizeText(pincode);
+
+  if (!cleanName || !cleanEmail || !cleanMobile || !cleanAddressLine1 || !cleanCity || !cleanState || !cleanPincode) {
+    return res.status(400).json({ error: 'All required checkout fields must be filled.' });
+  }
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+    return res.status(400).json({ error: 'Invalid email address.' });
+  }
+
+  if (!/^\d{10}$/.test(cleanMobile)) {
+    return res.status(400).json({ error: 'Mobile number must be 10 digits.' });
+  }
+
+  if (!/^\d{6}$/.test(cleanPincode)) {
+    return res.status(400).json({ error: 'Pincode must be 6 digits.' });
+  }
+
+  const { data: productData, error: productError } = await adminSupabase
+    .from('profile_products')
+    .select('id,seller_id,title,price,is_active')
+    .eq('id', productId)
+    .eq('is_active', true)
+    .maybeSingle();
+
+  if (productError) {
+    return res.status(400).json({ error: productError.message });
+  }
+
+  if (!productData) {
+    return res.status(404).json({ error: 'Product not found.' });
+  }
+
+  if (productData.seller_id === req.user.id) {
+    return res.status(400).json({ error: 'You cannot buy your own product.' });
+  }
+
+  const amount = Number(productData.price || 0);
+  if (!validatePositiveAmount(amount)) {
+    return res.status(400).json({ error: 'Invalid product amount.' });
+  }
+
+  const { data: orderRow, error: orderInsertError } = await adminSupabase
+    .from('product_orders')
+    .insert({
+      product_id: productData.id,
+      buyer_id: req.user.id,
+      seller_id: productData.seller_id,
+      product_title_snapshot: productData.title,
+      price_snapshot: amount,
+      currency: 'INR',
+      customer_name: cleanName,
+      customer_email: cleanEmail,
+      customer_mobile: cleanMobile,
+      address_line1: cleanAddressLine1,
+      address_line2: cleanAddressLine2 || null,
+      city: cleanCity,
+      state: cleanState,
+      pincode: cleanPincode,
+      status: productOrderStatuses.pending
+    })
+    .select('*')
+    .single();
+
+  if (orderInsertError) {
+    return res.status(400).json({ error: orderInsertError.message });
+  }
+
+  const razorpayOrder = await razorpay.orders.create({
+    amount: Math.round(amount * 100),
+    currency: 'INR',
+    receipt: shortReceipt('prod', orderRow.id),
+    notes: {
+      productId: productData.id,
+      productOrderId: orderRow.id,
+      buyerId: req.user.id,
+      sellerId: productData.seller_id
+    }
+  });
+
+  await adminSupabase
+    .from('product_orders')
+    .update({ razorpay_order_id: razorpayOrder.id })
+    .eq('id', orderRow.id);
+
+  const { error: paymentInsertError } = await adminSupabase
+    .from('product_payments')
+    .insert({
+      product_order_id: orderRow.id,
+      buyer_id: req.user.id,
+      seller_id: productData.seller_id,
+      amount,
+      currency: 'INR',
+      razorpay_order_id: razorpayOrder.id,
+      status: 'created'
+    });
+
+  if (paymentInsertError) {
+    return res.status(400).json({ error: paymentInsertError.message });
+  }
+
+  return res.json({
+    data: {
+      order: razorpayOrder,
+      productOrderId: orderRow.id,
+      razorpayKeyId: RAZORPAY_KEY_ID
+    }
+  });
+}));
+
+app.post('/api/products/:productId/verify-payment', requireAuth, asyncHandler(async (req, res) => {
+  const { productId } = req.params;
+  const { productOrderId, razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+
+  if (!productOrderId || !razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+    return res.status(400).json({ error: 'Missing payment verification data.' });
+  }
+
+  const { data: orderRow, error: orderFetchError } = await adminSupabase
+    .from('product_orders')
+    .select('*')
+    .eq('id', productOrderId)
+    .eq('product_id', productId)
+    .maybeSingle();
+
+  if (orderFetchError || !orderRow) {
+    return res.status(404).json({ error: 'Product order not found.' });
+  }
+
+  if (orderRow.buyer_id !== req.user.id) {
+    return res.status(403).json({ error: 'Not allowed.' });
+  }
+
+  const digest = crypto
+    .createHmac('sha256', RAZORPAY_KEY_SECRET)
+    .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+    .digest('hex');
+
+  if (digest !== razorpay_signature) {
+    return res.status(400).json({ error: 'Invalid Razorpay signature.' });
+  }
+
+  await adminSupabase
+    .from('product_payments')
+    .update({
+      razorpay_payment_id,
+      razorpay_signature,
+      status: 'captured'
+    })
+    .eq('product_order_id', productOrderId)
+    .eq('razorpay_order_id', razorpay_order_id);
+
+  await adminSupabase
+    .from('product_orders')
+    .update({
+      status: productOrderStatuses.paid,
+      razorpay_order_id,
+      razorpay_payment_id
+    })
+    .eq('id', productOrderId);
+
+  await createNotification({
+    userId: orderRow.buyer_id,
+    type: 'product_purchase_success',
+    title: 'Product purchase successful',
+    message: 'Your product order has been paid successfully.',
+    metadata: { productId, productOrderId, razorpayPaymentId: razorpay_payment_id }
+  });
+
+  await createNotification({
+    userId: orderRow.seller_id,
+    type: 'product_sold',
+    title: 'New product order',
+    message: 'You received a paid order for your product.',
+    metadata: { productId, productOrderId, razorpayPaymentId: razorpay_payment_id }
+  });
+
+  return res.json({ success: true });
 }));
 
 app.use((error, _req, res, next) => {

@@ -358,6 +358,291 @@ for update
 using (auth.uid() = profile_id)
 with check (auth.uid() = profile_id);
 
+-- 9) Profile ratings and reviews
+create table if not exists public.profile_reviews (
+  id uuid primary key default gen_random_uuid(),
+  profile_id uuid not null references public.profiles(id) on delete cascade,
+  reviewer_id uuid not null references public.profiles(id) on delete cascade,
+  rating int not null check (rating between 1 and 5),
+  review_text text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint profile_reviews_unique_pair unique (profile_id, reviewer_id),
+  constraint profile_reviews_no_self_review check (profile_id <> reviewer_id),
+  constraint profile_reviews_text_required check (length(trim(review_text)) > 0)
+);
+
+create or replace function public.set_profile_reviews_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_profile_reviews_updated_at on public.profile_reviews;
+create trigger trg_profile_reviews_updated_at
+before update on public.profile_reviews
+for each row
+execute function public.set_profile_reviews_updated_at();
+
+alter table public.profile_reviews enable row level security;
+
+drop policy if exists "Authenticated users can read profile reviews" on public.profile_reviews;
+create policy "Authenticated users can read profile reviews"
+on public.profile_reviews
+for select
+using (auth.role() = 'authenticated');
+
+drop policy if exists "Users can create own profile reviews" on public.profile_reviews;
+create policy "Users can create own profile reviews"
+on public.profile_reviews
+for insert
+with check (auth.uid() = reviewer_id);
+
+drop policy if exists "Users can update own profile reviews" on public.profile_reviews;
+create policy "Users can update own profile reviews"
+on public.profile_reviews
+for update
+using (auth.uid() = reviewer_id)
+with check (auth.uid() = reviewer_id);
+
+drop policy if exists "Users can delete own profile reviews" on public.profile_reviews;
+create policy "Users can delete own profile reviews"
+on public.profile_reviews
+for delete
+using (auth.uid() = reviewer_id);
+
+-- 9b) Profile products for creator selling
+create table if not exists public.profile_products (
+  id uuid primary key default gen_random_uuid(),
+  seller_id uuid not null references public.profiles(id) on delete cascade,
+  title text not null,
+  category text not null,
+  description text not null,
+  price numeric(10,2) not null check (price > 0),
+  product_url text,
+  image_url text,
+  image_path text,
+  is_active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint profile_products_title_required check (length(trim(title)) > 0),
+  constraint profile_products_category_required check (length(trim(category)) > 0),
+  constraint profile_products_description_required check (length(trim(description)) > 0)
+);
+
+alter table public.profile_products
+  add column if not exists image_url text,
+  add column if not exists image_path text;
+
+create or replace function public.set_profile_products_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_profile_products_updated_at on public.profile_products;
+create trigger trg_profile_products_updated_at
+before update on public.profile_products
+for each row
+execute function public.set_profile_products_updated_at();
+
+alter table public.profile_products enable row level security;
+
+drop policy if exists "Authenticated users can read profile products" on public.profile_products;
+create policy "Authenticated users can read profile products"
+on public.profile_products
+for select
+using (auth.role() = 'authenticated');
+
+drop policy if exists "Users can create own profile products" on public.profile_products;
+create policy "Users can create own profile products"
+on public.profile_products
+for insert
+with check (auth.uid() = seller_id);
+
+drop policy if exists "Users can update own profile products" on public.profile_products;
+create policy "Users can update own profile products"
+on public.profile_products
+for update
+using (auth.uid() = seller_id)
+with check (auth.uid() = seller_id);
+
+drop policy if exists "Users can delete own profile products" on public.profile_products;
+create policy "Users can delete own profile products"
+on public.profile_products
+for delete
+using (auth.uid() = seller_id);
+
+-- 9c) Storage bucket for product images
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'product-images',
+  'product-images',
+  true,
+  5242880,
+  array['image/jpeg', 'image/png', 'image/webp']
+)
+on conflict (id) do nothing;
+
+drop policy if exists "Public can view product images" on storage.objects;
+create policy "Public can view product images"
+on storage.objects
+for select
+using (bucket_id = 'product-images');
+
+drop policy if exists "Users can upload own product images" on storage.objects;
+create policy "Users can upload own product images"
+on storage.objects
+for insert
+with check (
+  bucket_id = 'product-images'
+  and auth.uid()::text = (storage.foldername(name))[1]
+);
+
+drop policy if exists "Users can update own product images" on storage.objects;
+create policy "Users can update own product images"
+on storage.objects
+for update
+using (
+  bucket_id = 'product-images'
+  and auth.uid()::text = (storage.foldername(name))[1]
+);
+
+drop policy if exists "Users can delete own product images" on storage.objects;
+create policy "Users can delete own product images"
+on storage.objects
+for delete
+using (
+  bucket_id = 'product-images'
+  and auth.uid()::text = (storage.foldername(name))[1]
+);
+
+-- 9d) Product orders (checkout details)
+create table if not exists public.product_orders (
+  id uuid primary key default gen_random_uuid(),
+  product_id uuid not null references public.profile_products(id) on delete cascade,
+  buyer_id uuid not null references public.profiles(id) on delete cascade,
+  seller_id uuid not null references public.profiles(id) on delete cascade,
+  product_title_snapshot text not null,
+  price_snapshot numeric(10,2) not null,
+  currency text not null default 'INR',
+  customer_name text not null,
+  customer_email text not null,
+  customer_mobile text not null,
+  address_line1 text not null,
+  address_line2 text,
+  city text not null,
+  state text not null,
+  pincode text not null,
+  status text not null default 'pending' check (status in ('pending', 'paid', 'failed', 'cancelled')),
+  razorpay_order_id text,
+  razorpay_payment_id text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint product_orders_no_self_buy check (buyer_id <> seller_id),
+  constraint product_orders_price_positive check (price_snapshot > 0)
+);
+
+create or replace function public.set_product_orders_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_product_orders_updated_at on public.product_orders;
+create trigger trg_product_orders_updated_at
+before update on public.product_orders
+for each row
+execute function public.set_product_orders_updated_at();
+
+alter table public.product_orders enable row level security;
+
+drop policy if exists "Participants can read product orders" on public.product_orders;
+create policy "Participants can read product orders"
+on public.product_orders
+for select
+using (auth.uid() = buyer_id or auth.uid() = seller_id);
+
+drop policy if exists "Buyers can create own product orders" on public.product_orders;
+create policy "Buyers can create own product orders"
+on public.product_orders
+for insert
+with check (auth.uid() = buyer_id);
+
+drop policy if exists "Participants can update product orders" on public.product_orders;
+create policy "Participants can update product orders"
+on public.product_orders
+for update
+using (auth.uid() = buyer_id or auth.uid() = seller_id)
+with check (auth.uid() = buyer_id or auth.uid() = seller_id);
+
+-- 9e) Product payments
+create table if not exists public.product_payments (
+  id uuid primary key default gen_random_uuid(),
+  product_order_id uuid not null references public.product_orders(id) on delete cascade,
+  buyer_id uuid not null references public.profiles(id) on delete cascade,
+  seller_id uuid not null references public.profiles(id) on delete cascade,
+  amount numeric(10,2) not null,
+  currency text not null default 'INR',
+  razorpay_order_id text not null,
+  razorpay_payment_id text,
+  razorpay_signature text,
+  status text not null default 'created' check (status in ('created', 'captured', 'failed')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint product_payments_unique_order unique (razorpay_order_id),
+  constraint product_payments_positive_amount check (amount > 0)
+);
+
+create or replace function public.set_product_payments_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_product_payments_updated_at on public.product_payments;
+create trigger trg_product_payments_updated_at
+before update on public.product_payments
+for each row
+execute function public.set_product_payments_updated_at();
+
+alter table public.product_payments enable row level security;
+
+drop policy if exists "Participants can read product payments" on public.product_payments;
+create policy "Participants can read product payments"
+on public.product_payments
+for select
+using (auth.uid() = buyer_id or auth.uid() = seller_id);
+
+drop policy if exists "Buyers can create own product payments" on public.product_payments;
+create policy "Buyers can create own product payments"
+on public.product_payments
+for insert
+with check (auth.uid() = buyer_id);
+
+drop policy if exists "Participants can update product payments" on public.product_payments;
+create policy "Participants can update product payments"
+on public.product_payments
+for update
+using (auth.uid() = buyer_id or auth.uid() = seller_id)
+with check (auth.uid() = buyer_id or auth.uid() = seller_id);
+
 -- 9) Hire requests
 create table if not exists public.hire_requests (
   id uuid primary key default gen_random_uuid(),
